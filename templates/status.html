@@ -7,16 +7,31 @@
     <h1 class="phz-title" style="font-size: var(--text-subtitle-1);">{{ res.machine_name }}</h1>
     <div class="phz-stat" style="margin-bottom:0;">Reserved for {{ res.email }}</div>
     <div class="phz-countdown" id="countdown" data-expires="{{ res.expires_at }}">--:--:--</div>
+    {% if res.status == 'active' %}
+    <div class="phz-stat" style="margin-bottom: var(--size-2);">
+      {% if session_known %}<span class="phz-badge {{ 'online' if conn else 'offline' }}">{{ session_label }}</span>{% else %}Session state unavailable{% endif %}
+    </div>
+    <div style="color: var(--ink-muted); font-size: var(--text-caption); margin-bottom: var(--size-4);">
+      When the timer runs out, Phaze disconnects you and frees the machine. Save your work before then.
+    </div>
     <div class="phz-actions">
       <a class="phz-btn phz-btn-primary" href="{{ deep_link }}">Connect in Phaze</a>
       <form method="post" action="/status/{{ res.id }}/extend">
         <input type="hidden" name="hours" value="1">
         <button class="phz-btn phz-btn-secondary" type="submit">Extend +1h</button>
       </form>
+      {% if conn %}
+      <form method="post" action="/status/{{ res.id }}/disconnect">
+        <button class="phz-btn phz-btn-secondary" type="submit" title="End the session. Your reservation stays, so you can reconnect.">Disconnect</button>
+      </form>
+      {% endif %}
       <form method="post" action="/status/{{ res.id }}/release">
-        <button class="phz-btn phz-btn-negative" type="submit">Release now</button>
+        <button class="phz-btn phz-btn-negative" type="submit" title="End the session and free the machine.">Disconnect &amp; release</button>
       </form>
     </div>
+    {% else %}
+    <div class="phz-stat">This reservation has ended ({{ res.status }}).</div>
+    {% endif %}
   </div>
 
 <script>

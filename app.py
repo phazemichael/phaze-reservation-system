@@ -3,7 +3,12 @@
 Booking form -> assign via Phaze API -> status page w/ countdown ->
 background sweeper unassigns expired reservations every 15s and
 auto-promotes the next queued request onto a freed machine.
-Admin view: fleet status, force-release, history, queue.
+Admin view: fleet status with live sessions, disconnect, disconnect &
+release, history, queue.
+
+Unassigning a machine disconnects its assigned user (hosts on Phaze 0.14.0
+or later), so releasing or expiring a reservation ends the live session.
+"Disconnect only" ends the session and gives the seat straight back.
 """
 import os
 import threading
@@ -18,6 +23,20 @@ app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 
 SWEEP_INTERVAL_SEC = 15
+
+
+@app.template_filter("fmt_hm")
+def fmt_hm(iso_value):
+    """API timestamp (UTC ISO 8601) -> local 24-hour time, e.g. 14:05."""
+    dt = phz.parse_time(iso_value)
+    return dt.strftime("%H:%M") if dt else ""
+
+
+def _session_label(conn: dict | None) -> str:
+    if not conn:
+        return "Not connected"
+    since = fmt_hm(conn.get("connected_at"))
+    return f"Connected since {since}" if since else "Connected"
 
 # Optional Slack notification on auto-expiry — only imported if configured,
 # so this app runs standalone without slack_sdk/slack_bolt installed.
@@ -45,18 +64,20 @@ def _notify_expiry(reservation: dict):
         if slack_user_id:
             _slack_client.chat_postMessage(
                 channel=slack_user_id,
-                text=f":alarm_clock: Your reservation on *{reservation['machine_name']}* has expired "
-                     f"and the machine has been released.",
+                text=f":alarm_clock: Your reservation on *{reservation['machine_name']}* has expired. "
+                     f"You've been disconnected and the machine has been released.",
             )
     except Exception:
         pass  # notification is best-effort, never block the sweep
 
 
-def _release_and_promote(reservation: dict):
-    """Unassign a machine and, if someone is queued, promote them onto it."""
+def _release_and_promote(reservation: dict, status: str = "expired"):
+    """Unassign a machine (which disconnects the user) and, if someone is
+    queued, promote them onto it. Only auto-expiry sends the Slack DM."""
     phz.unassign_machines([reservation["machine_id"]])
-    store.release_reservation(reservation["id"], status="expired")
-    _notify_expiry(reservation)
+    store.release_reservation(reservation["id"], status=status)
+    if status == "expired":
+        _notify_expiry(reservation)
 
     nxt = store.next_waiting()
     if nxt:
@@ -131,7 +152,43 @@ def status(rid):
         return redirect(url_for("book"))
     machine_id = res["machine_id"]
     deep_link = f"phaze://connect?id={machine_id}"
-    return render_template("status.html", res=res, deep_link=deep_link)
+    conn = None
+    session_known = True
+    if res["status"] == "active":
+        try:
+            conn = next(
+                (c for c in phz.list_connections(is_active=True, machine_id=machine_id,
+                                                 accessor_id=res["user_id"])
+                 if c.get("connected_at")),
+                None,
+            )
+        except Exception:
+            session_known = False
+    return render_template("status.html", res=res, deep_link=deep_link, conn=conn,
+                           session_label=_session_label(conn), session_known=session_known)
+
+
+@app.route("/status/<rid>/disconnect", methods=["POST"])
+def disconnect(rid):
+    """Disconnect only: end the live session, keep the reservation."""
+    res = store.get_reservation(rid)
+    back = url_for("admin") if request.form.get("next") == "admin" else url_for("status", rid=rid)
+    if not res or res["status"] != "active":
+        flash("Reservation not active.")
+        return redirect(back)
+    try:
+        ended = phz.disconnect_user(res["machine_id"], res["user_id"])
+    except Exception as e:
+        flash(f"Disconnect failed: {e}")
+        return redirect(back)
+    if ended:
+        flash(f"{res['email']} was disconnected from {res['machine_name']}. "
+              f"The reservation is still active, so they can reconnect.")
+    else:
+        flash(f"Phaze still shows {res['email']} connected to {res['machine_name']}. "
+              f"The host needs Phaze 0.14.0 or later, and admin or IT support roles "
+              f"keep their access. The reservation is still active.")
+    return redirect(back)
 
 
 @app.route("/status/<rid>/extend", methods=["POST"])
@@ -151,10 +208,11 @@ def extend(rid):
 
 @app.route("/status/<rid>/release", methods=["POST"])
 def release(rid):
+    """Disconnect & release: end the session and free the machine."""
     res = store.get_reservation(rid)
     if res and res["status"] == "active":
-        _release_and_promote(res)
-        flash("Machine released.")
+        _release_and_promote(res, status="released")
+        flash("Disconnected and released. The machine is free for the next person.")
     return redirect(url_for("book"))
 
 
@@ -163,19 +221,58 @@ def admin():
     machines = phz.list_machines()
     reservations = store.all_reservations(limit=50)
     queue = store.all_queue(limit=50)
-    active_ids = {r["machine_id"] for r in store.active_reservations()}
+    active_by_machine = {r["machine_id"]: r for r in store.active_reservations()}
+    try:
+        sessions = phz.active_sessions_by_machine()
+        sessions_known = True
+    except Exception:
+        sessions, sessions_known = {}, False
     return render_template("admin.html", machines=machines, reservations=reservations,
-                            queue=queue, active_ids=active_ids)
+                            queue=queue, active_by_machine=active_by_machine,
+                            sessions=sessions, sessions_known=sessions_known)
+
+
+@app.route("/admin/disconnect/<machine_id>", methods=["POST"])
+def admin_disconnect(machine_id):
+    """Disconnect only, from the fleet view. Works for any machine assigned
+    to a single user, whether or not this app made the reservation."""
+    res = store.active_reservation_for_machine(machine_id)
+    if res:
+        user_id, label = res["user_id"], res["email"]
+    else:
+        m = phz.get_machine(machine_id)
+        if not m or not m.get("assignee_id"):
+            flash("Disconnect only works on a machine assigned to one user. "
+                  "Use Disconnect & release instead.")
+            return redirect(url_for("admin"))
+        user_id, label = m["assignee_id"], m["assignee_id"]
+        try:
+            s = phz.active_sessions_by_machine().get(machine_id) or {}
+            label = (s.get("accessor") or {}).get("email") or label
+        except Exception:
+            pass
+    try:
+        ended = phz.disconnect_user(machine_id, user_id)
+    except Exception as e:
+        flash(f"Disconnect failed: {e}")
+        return redirect(url_for("admin"))
+    if ended:
+        flash(f"Disconnected {label}. The machine is still assigned to them.")
+    else:
+        flash(f"Phaze still shows {label} connected. The host needs Phaze 0.14.0 or later, "
+              f"and admin or IT support roles keep their access.")
+    return redirect(url_for("admin"))
 
 
 @app.route("/admin/force-release/<machine_id>", methods=["POST"])
 def force_release(machine_id):
+    """Disconnect & release from the fleet view."""
     res = store.active_reservation_for_machine(machine_id)
     if res:
-        _release_and_promote(res)
+        _release_and_promote(res, status="released")
     else:
         phz.unassign_machines([machine_id])
-    flash(f"Force-released {machine_id[:12]}…")
+    flash(f"Disconnected and released {machine_id[:12]}…")
     return redirect(url_for("admin"))
 
 

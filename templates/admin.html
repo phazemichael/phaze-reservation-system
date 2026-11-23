@@ -5,19 +5,34 @@
   <h1 class="phz-title">Fleet admin</h1>
 
   <h2 class="phz-subtitle">Machines</h2>
+  {% if not sessions_known %}
+  <div class="phz-flash">Couldn't read live sessions from Phaze right now, so the Session column is blank.</div>
+  {% endif %}
   <div class="phz-card" style="padding:0;">
     <table class="phz-table">
-      <tr><th>Name</th><th>Online</th><th>Assigned to</th><th>Reserved (our system)</th><th></th></tr>
+      <tr><th>Name</th><th>Online</th><th>Assigned to</th><th>Session</th><th>Reserved (our system)</th><th></th></tr>
       {% for m in machines %}
+      {% set r = active_by_machine.get(m.id) %}
+      {% set s = sessions.get(m.id) %}
       <tr>
         <td>{{ m.name }}</td>
         <td><span class="phz-badge {{ 'online' if m.is_online else 'offline' }}">{{ 'online' if m.is_online else 'offline' }}</span></td>
-        <td>{{ m.assignee_id or m.group_id or '—' }}</td>
-        <td><span class="phz-badge {{ 'reserved' if m.id in active_ids else 'free' }}">{{ 'yes' if m.id in active_ids else 'free' }}</span></td>
+        <td>{{ r.email if r else (m.assignee_id or m.group_id or '—') }}</td>
         <td>
+          {% if not sessions_known %}—
+          {% elif s %}<span class="phz-badge online">Connected since {{ s.connected_at|fmt_hm }}</span>{% if s.accessor and s.accessor.email and not (r and r.email == s.accessor.email) %}<br><span style="color: var(--ink-muted); font-size: var(--text-caption);">{{ s.accessor.email }}</span>{% endif %}
+          {% else %}<span style="color: var(--ink-muted);">Not connected</span>{% endif %}
+        </td>
+        <td><span class="phz-badge {{ 'reserved' if r else 'free' }}">{{ 'yes' if r else 'free' }}</span></td>
+        <td style="white-space: nowrap;">
+          {% if s and m.assignee_id %}
+          <form method="post" action="/admin/disconnect/{{ m.id }}" style="display:inline; margin:0;">
+            <button class="phz-btn phz-btn-secondary" style="padding: var(--size-2) var(--size-4); font-size: var(--text-caption);" type="submit" title="End the session. The machine stays assigned, so they can reconnect.">Disconnect</button>
+          </form>
+          {% endif %}
           {% if m.assignee_id or m.group_id %}
           <form method="post" action="/admin/force-release/{{ m.id }}" style="display:inline; margin:0;">
-            <button class="phz-btn phz-btn-negative" style="padding: var(--size-2) var(--size-4); font-size: var(--text-caption);" type="submit">Force release</button>
+            <button class="phz-btn phz-btn-negative" style="padding: var(--size-2) var(--size-4); font-size: var(--text-caption);" type="submit" title="End the session and free the machine.">Disconnect &amp; release</button>
           </form>
           {% endif %}
         </td>
@@ -25,6 +40,10 @@
       {% endfor %}
     </table>
   </div>
+  <p style="color: var(--ink-muted); font-size: var(--text-caption);">
+    Disconnect ends the live session and keeps the machine assigned. Disconnect &amp; release also frees it for the queue.
+    Both need Phaze 0.14.0 or later on the host. Admin and IT support roles can connect to any machine and aren't disconnected.
+  </p>
 
   <h2 class="phz-subtitle">Queue</h2>
   <div class="phz-card" style="padding:0;">
