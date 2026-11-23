@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Reserve a Phaze machine{% endblock %}
+{% block main_class %} narrow{% endblock %}
+{% set active = 'book' %}
+{% block content %}
+  <h1 class="phz-title">Reserve a Phaze machine</h1>
+  <div class="phz-stat">{{ available }} / {{ total }} machines free right now
+    {% if queue_len > 0 %}&middot; {{ queue_len }} in queue{% endif %}</div>
+
+  <div class="phz-card">
+    <form method="post">
+      <label class="phz-label">Your Phaze account email</label>
+      <input class="phz-input" type="email" name="email" required placeholder="you@phaze.app">
+      <label class="phz-label">Hours needed</label>
+      <input class="phz-input" type="number" name="hours" min="0.25" max="24" step="0.25" value="1" required>
+      <div class="phz-actions">
+        <button class="phz-btn phz-btn-primary" type="submit">Reserve a machine</button>
+      </div>
+    </form>
+  </div>
+
+  <p style="margin-top: var(--size-7);"><a class="phz-link-subtle" href="/admin">Admin fleet view &rarr;</a></p>
+{% endblock %}

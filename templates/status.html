@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Reservation status{% endblock %}
+{% block main_class %} narrow{% endblock %}
+{% set active = 'book' %}
+{% block content %}
+  <div class="phz-card">
+    <h1 class="phz-title" style="font-size: var(--text-subtitle-1);">{{ res.machine_name }}</h1>
+    <div class="phz-stat" style="margin-bottom:0;">Reserved for {{ res.email }}</div>
+    <div class="phz-countdown" id="countdown" data-expires="{{ res.expires_at }}">--:--:--</div>
+    <div class="phz-actions">
+      <a class="phz-btn phz-btn-primary" href="{{ deep_link }}">Connect in Phaze</a>
+      <form method="post" action="/status/{{ res.id }}/extend">
+        <input type="hidden" name="hours" value="1">
+        <button class="phz-btn phz-btn-secondary" type="submit">Extend +1h</button>
+      </form>
+      <form method="post" action="/status/{{ res.id }}/release">
+        <button class="phz-btn phz-btn-negative" type="submit">Release now</button>
+      </form>
+    </div>
+  </div>
+
+<script>
+const el = document.getElementById('countdown');
+const expiresAt = parseFloat(el.dataset.expires) * 1000;
+function tick() {
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) { el.textContent = 'Expired'; el.classList.add('warn'); return; }
+  const s = Math.floor(remaining / 1000);
+  const h = String(Math.floor(s / 3600)).padStart(2, '0');
+  const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const sec = String(s % 60).padStart(2, '0');
+  el.textContent = `${h}:${m}:${sec}`;
+  if (remaining < 5 * 60 * 1000) el.classList.add('warn');
+}
+tick();
+setInterval(tick, 1000);
+</script>
+{% endblock %}

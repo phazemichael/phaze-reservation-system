@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Admin — fleet status{% endblock %}
+{% set active = 'admin' %}
+{% block content %}
+  <h1 class="phz-title">Fleet admin</h1>
+
+  <h2 class="phz-subtitle">Machines</h2>
+  <div class="phz-card" style="padding:0;">
+    <table class="phz-table">
+      <tr><th>Name</th><th>Online</th><th>Assigned to</th><th>Reserved (our system)</th><th></th></tr>
+      {% for m in machines %}
+      <tr>
+        <td>{{ m.name }}</td>
+        <td><span class="phz-badge {{ 'online' if m.is_online else 'offline' }}">{{ 'online' if m.is_online else 'offline' }}</span></td>
+        <td>{{ m.assignee_id or m.group_id or '—' }}</td>
+        <td><span class="phz-badge {{ 'reserved' if m.id in active_ids else 'free' }}">{{ 'yes' if m.id in active_ids else 'free' }}</span></td>
+        <td>
+          {% if m.assignee_id or m.group_id %}
+          <form method="post" action="/admin/force-release/{{ m.id }}" style="display:inline; margin:0;">
+            <button class="phz-btn phz-btn-negative" style="padding: var(--size-2) var(--size-4); font-size: var(--text-caption);" type="submit">Force release</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <h2 class="phz-subtitle">Queue</h2>
+  <div class="phz-card" style="padding:0;">
+    <table class="phz-table">
+      <tr><th>Email</th><th>Hours</th><th>Status</th></tr>
+      {% for q in queue %}
+      <tr><td>{{ q.email }}</td><td>{{ q.hours }}</td><td>{{ q.status }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <h2 class="phz-subtitle">Reservation history</h2>
+  <div class="phz-card" style="padding:0;">
+    <table class="phz-table">
+      <tr><th>Email</th><th>Machine</th><th>Status</th></tr>
+      {% for r in reservations %}
+      <tr><td>{{ r.email }}</td><td>{{ r.machine_name }}</td><td>{{ r.status }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+
+  <p style="margin-top: var(--size-7);"><a class="phz-link-subtle" href="/">&larr; Booking form</a></p>
+{% endblock %}
